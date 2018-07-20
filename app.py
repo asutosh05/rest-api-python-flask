@@ -1,8 +1,10 @@
-from flask import Flask,request,jsonify
+from flask import Flask,request,jsonify,make_response
 from flask_sqlalchemy import SQLAlchemy
 import uuid
 from werkzeug.security import generate_password_hash,check_password_hash
-
+import jwt
+import datetime
+from functools import wraps
 app=Flask(__name__)
 
 app.config['SECRET_KEY']='thisverysecreatdontsharewithanyone'
@@ -21,7 +23,24 @@ class Todo(db.Model):
     id=db.Column(db.Integer,primary_key=True)
     text=db.Column(db.String(50))
 
+def token_required(f):
+    @wraps(f)
+    def decorated(*args,**kwargs):
+        token=None
+        if 'x-access-token' in request.headers:
+            token=request.headers['x-access-token']
 
+        if not token:
+            return jsonify({'message':'token is missing'}),401
+        try:
+            data=jwt.decode(token,app.config['SECRET_KEY'])
+            create_user=User.query.filter_by(public_id=data['public_id'])
+        except:
+            return jsonify({'message':'token is invalid'}),401
+
+        return f(create_user,*args,**kwargs)
+    return decorated
+    
 @app.route('/user',methods=['GET'])
 def get_all_user():
     users=User.query.all()
@@ -81,7 +100,24 @@ def delete_user(public_id):
     db.session.commit()
     return jsonify({'message':'user deleted'})
 
+@app.route('/login')
+def login():
+    auth= request.authorization
 
+    if not auth or not auth.username or not auth.password:
+        return make_response('Couild not verify',401,{'WW-Authenticate':'Basic realm="Login Required!"'})
+
+    user=User.query.filter_by(name=auth.username).first()
+
+    if not user:
+        return make_response('Couild not verify',401,{'WW-Authenticate':'Basic realm="Login Required!"'})
+
+    if check_password_hash(user.password,auth.password):
+        token=jwt.encode({'public_id':user.public_id,'exp':datetime.datetime.utcnow() + datetime.timedelta(minutes=30)},app.config['SECRET_KEY'])
+
+        return jsonify({'token':token.decode('UTF-8')})
+
+    return make_response('Couild not verify',401,{'WW-Authenticate':'Basic realm="Login Required!"'})
 
 if __name__=='__main__':
     app.run(debug=True)
